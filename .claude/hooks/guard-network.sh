@@ -3,9 +3,11 @@
 # The loop reads customer email, which is untrusted. This hook is the layer
 # that does not depend on the model obeying: it blocks the ways a hijacked
 # agent could send data out or dump secrets. Exit 2 = block, stderr = reason.
-cmd=$(jq -r '.tool_input.command // ""')
-
 block() { echo "Blocked by guard-network: $1" >&2; exit 2; }
+
+# Without jq the guard reads an empty command and lets everything through: fail closed.
+command -v jq >/dev/null || block "jq is missing: install it (see the setup guide)"
+cmd=$(jq -r '.tool_input.command // ""')
 
 # True when the command has at least one literal URL and every URL points at this
 # machine (localhost, 127.0.0.1, [::1], 0.0.0.0). Local traffic never leaves the
