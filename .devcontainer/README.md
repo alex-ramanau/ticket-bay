@@ -57,7 +57,7 @@ brew install colima
 - The VM has its own firewall (`init-firewall.sh --engine`). The box keeps its allowlist (GitHub, npm, Claude). Every other container reaches only the other containers: no internet, no npm, no ports on your machine (`host.docker.internal`). Testcontainers needs no more: the engine pulls its images.
 - Stop it: `colima stop ticketbay-box`. Remove it and its disk: `colima delete --data ticketbay-box`. Another clone of the repo: `BOX_DOCKER_PROFILE=<name> ./box --docker` (one VM per repo folder).
 - VS Code and Cursor: "Reopen in Container" offers "TicketBay Sandbox + Docker (Colima)" (`docker/devcontainer.json`). Start the VM with `./box --docker true` and point the editor at the `colima-ticketbay-box` Docker context; on any other engine the box refuses to start. (Checked with the devcontainer CLI, not in an editor.)
-- Linux (not tested): Colima runs there too, in a QEMU VM. Never mount your host's own Docker socket instead: on Linux that socket is root on your machine.
+- Linux and WSL: `./box --docker` stops with a message, because its VM uses Apple's virtualization (`--vm-type vz`). Run the Docker tasks outside the box: `npm run test:integration` on your machine uses your own Docker Engine. Never mount your host's own Docker socket into the box: on Linux that socket is root on your machine.
 
 **What `--docker` does not protect**
 - The socket makes the agent root in the VM. It can open a root shell in the box (`docker exec -u 0`) and remove the box's own firewall; the VM's firewall then still limits the box to the allowlist.

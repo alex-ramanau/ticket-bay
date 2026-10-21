@@ -4,7 +4,7 @@
 #   ./box <command...>     run any command inside the box, e.g. ./box npm run test:unit
 #   ./box --docker [...]   the same box on its own Docker engine (a Colima VM that shares only
 #                          this repo, and your brain settings read-only), so Testcontainers and
-#                          the UI tests run inside it
+#                          the UI tests run inside it. macOS only: the VM uses Apple's virtualization.
 # Inside the box Claude Code runs with --dangerously-skip-permissions: the box is the safety
 # (only this repo, default-deny network). See .devcontainer/README.md for what it does not do.
 set -euo pipefail
@@ -18,6 +18,7 @@ config=()
 
 if [ "${1:-}" = "--docker" ]; then
   shift
+  [ "$(uname -s)" = Darwin ] || { echo "box --docker: runs on macOS only. On Linux or WSL, run Claude Code outside the box for this task: Testcontainers then uses your own Docker Engine." >&2; exit 1; }
   repo_root="$(cd "$repo_root" && pwd -P)"   # the path the VM shares: no symlinks
   command -v colima >/dev/null || { echo "box --docker: needs Colima. Install it: brew install colima" >&2; exit 1; }
   profile="${BOX_DOCKER_PROFILE:-ticketbay-box}"
