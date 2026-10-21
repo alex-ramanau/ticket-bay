@@ -9,6 +9,9 @@
 # (only this repo, default-deny network). See .devcontainer/README.md for what it does not do.
 set -euo pipefail
 
+# Compose v5 builds with buildx bake, which stops at the generated Dockerfile and asks for --allow=fs.read: skip that check.
+export BUILDX_BAKE_ENTITLEMENTS_FS=0
+
 CLI="@devcontainers/cli@0.89.0"   # pinned devcontainer CLI
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 config=()
