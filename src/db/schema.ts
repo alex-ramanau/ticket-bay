@@ -30,6 +30,7 @@ export const events = pgTable(
     createdAtMs: instant("created_at_ms").notNull(),
     /** set when an admin cancels the event: sales stop, every paid order is refunded */
     cancelledAtMs: instant("cancelled_at_ms"),
+    notes: text("notes"),
   },
   (t) => [
     check("events_seats_in_range", sql`${t.seatsSold} >= 0 AND ${t.seatsSold} <= ${t.totalSeats}`),
