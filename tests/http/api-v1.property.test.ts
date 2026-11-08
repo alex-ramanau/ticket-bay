@@ -21,6 +21,10 @@
 //     at the payment provider (charges − refunds) equals what the live orders
 //     hold (totals − refunds); a reused Idempotency-Key never makes a second
 //     order. A failing sequence shrinks to its fewest steps.
+//  4. Any request. Whatever comes in — any method, path, query, API key,
+//     Idempotency-Key, Content-Type or body — the answer is never a 500, and
+//     it is always JSON. (A HEAD answer has no body by HTTP's rules; its
+//     Content-Type still says JSON.)
 //
 // Every run picks a new random seed, so every run tries different requests.
 // A failure prints its seed next to the shrunk counterexample; FC_SEED=<n>
@@ -485,6 +489,131 @@ describe("3. stateful sequences", () => {
         await fc.asyncModelRun(() => ({ model: { now: NOW, orders: [], keys: new Map() }, real }), cmds);
       }),
       runs(30),
+    );
+  }, 180_000);
+});
+
+// ---- 4. Any request --------------------------------------------------------------
+
+const OPEN_EVENT = "open-show";
+const WORKING_CODE = "SAVE10";
+
+/** What a header value can carry: printable ASCII and Latin-1. */
+const headerText = (maxLength: number, minLength = 0) =>
+  fc.string({ unit: fc.integer({ min: 0x20, max: 0xff }).filter((c) => c !== 0x7f).map((c) => String.fromCharCode(c)), minLength, maxLength });
+
+/** One path segment, already as it travels in a URL. "." and ".." are left out: a URL resolves them away before any server sees them. */
+const segment = fc.oneof(
+  fc.constant(OPEN_EVENT),
+  fc.nat(5).map(String),
+  // Around the largest Postgres INTEGER: an id just past it still looks like a number.
+  { weight: 3, arbitrary: fc.integer({ min: 2 ** 31 - 2, max: 2 ** 31 + 2 }).map(String) },
+  fc.constantFrom("0", "-1", "1.5", "1e3", "9007199254740993", "99999999999999999999", "9".repeat(400)),
+  fc.constantFrom("%", "%E0%A4%A", "%FF", "%00", "%2F", "%C0%AF"),
+  fc.string({ unit: "binary", maxLength: 20 }).filter((s) => s !== "." && s !== "..").map(encodeURIComponent),
+);
+
+const anyPath = fc
+  .tuple(
+    fc.oneof(
+      { weight: 3, arbitrary: fc.constantFrom("/api/v1/orders", "/api/v1/quote", "/api/v1/events") },
+      { weight: 3, arbitrary: segment.map((s) => `/api/v1/events/${s}`) },
+      { weight: 3, arbitrary: segment.map((s) => `/api/v1/orders/${s}/cancel`) },
+      fc.array(segment, { maxLength: 4 }).map((ss) => `/api/v1/${ss.join("/")}`),
+    ),
+    fc.option(fc.string({ maxLength: 20 }).map(encodeURIComponent), { nil: undefined }),
+  )
+  .map(([path, query]) => (query === undefined ? path : `${path}?${query}`));
+
+type AnyAuth = { key: "read-write" | "read" } | { header: string } | undefined;
+
+const anyAuth: fc.Arbitrary<AnyAuth> = fc.oneof(
+  { weight: 4, arbitrary: fc.constant({ key: "read-write" as const }) },
+  fc.constant({ key: "read" as const }),
+  fc.constant(undefined),
+  fc.oneof(
+    headerText(40),
+    headerText(40).map((s) => `Bearer ${s}`),
+    headerText(40).map((s) => `Bearer tb_${s}`),
+    headerText(600, 300).map((s) => `Bearer tb_${s}`),
+  ).map((header) => ({ header })),
+);
+
+const anyIdempotencyKey = fc.option(fc.oneof(fc.string({ minLength: 1, maxLength: 8 }), headerText(30), headerText(105, 95)), { nil: undefined });
+
+const anyContentType = fc.option(fc.oneof(fc.constantFrom("application/json", "text/plain", "multipart/form-data; boundary=x", "application/x-www-form-urlencoded"), headerText(30)), { nil: undefined });
+
+/** A cart a real client would send, or one with any of its fields gone wrong. */
+const anyCart = fc.record(
+  {
+    eventId: fc.oneof({ weight: 4, arbitrary: fc.constant<unknown>(OPEN_EVENT) }, fc.constantFrom<unknown>("no-such-event", "", "UPPER", null, 7), fc.string({ unit: "binary", maxLength: 20 })),
+    tickets: fc.oneof({ weight: 4, arbitrary: fc.integer({ min: 1, max: 50 }) as fc.Arbitrary<unknown> }, fc.constantFrom<unknown>(0, -1, 51, 1.5, "2", null, 2 ** 31, 2 ** 53, 1e308), fc.integer() as fc.Arbitrary<unknown>),
+    code: fc.oneof(fc.constantFrom<unknown>(WORKING_CODE, "NOPE", "", " ", null, 1), fc.string({ unit: "binary", maxLength: 41 })),
+  },
+  { requiredKeys: ["eventId", "tickets"] },
+);
+
+const anyBody = fc.option(
+  fc.oneof(
+    { weight: 4, arbitrary: anyCart.map((c) => JSON.stringify(c)) },
+    fc.json(),
+    fc.string({ unit: "binary", maxLength: 40 }),
+    fc.constantFrom('{"eventId":', "[", "\u0000", '{"__proto__":{"tickets":1}}', '{"eventId":"open-show","tickets":1e400}', `{"eventId":"${"a".repeat(5000)}","tickets":1}`),
+  ),
+  { nil: undefined },
+);
+
+interface AnyRequest {
+  method: string;
+  path: string;
+  auth: AnyAuth;
+  idempotencyKey: string | undefined;
+  contentType: string | undefined;
+  body: string | undefined;
+}
+
+const anyRequest: fc.Arbitrary<AnyRequest> = fc
+  .record({
+    method: fc.oneof({ weight: 4, arbitrary: fc.constant("POST") }, fc.constantFrom("GET", "HEAD", "PUT", "PATCH", "DELETE", "OPTIONS")),
+    path: anyPath,
+    auth: anyAuth,
+    idempotencyKey: anyIdempotencyKey,
+    contentType: anyContentType,
+    body: anyBody,
+  })
+  .map((r) => {
+    // A GET or HEAD cannot carry a body: `new Request` throws.
+    const req = r.method === "GET" || r.method === "HEAD" ? { ...r, body: undefined } : r;
+    return shown(
+      req,
+      `${req.method} ${req.path} | auth: ${JSON.stringify(req.auth)} | Idempotency-Key: ${JSON.stringify(req.idempotencyKey)} | Content-Type: ${JSON.stringify(req.contentType)} | body: ${JSON.stringify(req.body)}`,
+    );
+  });
+
+describe("4. any request", () => {
+  it("whatever request comes in, the answer is never a 500 and always JSON", async () => {
+    const anna = await customer(auth, "Anna");
+    await venue(t.db, { id: OPEN_EVENT, startsAtMs: NOW + 60 * DAY, totalSeats: 1_000_000, seatsSold: 0 });
+    await addCode(t.db, WORKING_CODE, 10);
+    // A real order, so the generated cancels can land on one.
+    const first = await call({ method: "POST", path: "/api/v1/orders", json: { eventId: OPEN_EVENT, tickets: 1 }, headers: { ...bearer(await freshKey(anna)), "idempotency-key": uniqueId("first") }, nowMs: NOW });
+    expect(first.status, first.text).toBe(201);
+
+    await fc.assert(
+      fc.asyncProperty(anyRequest, async (q) => {
+        const headers: Record<string, string> = {};
+        if (q.auth && "key" in q.auth) Object.assign(headers, bearer((await scopedKey(auth, anna.id, q.auth.key)).key));
+        else if (q.auth) headers.authorization = q.auth.header;
+        if (q.idempotencyKey !== undefined) headers["idempotency-key"] = q.idempotencyKey;
+        if (q.contentType !== undefined) headers["content-type"] = q.contentType;
+
+        const r = await call({ method: q.method, path: q.path, headers, rawBody: q.body, nowMs: NOW });
+
+        expect(r.status, r.text).not.toBe(500);
+        expect(r.headers.get("content-type"), `status ${r.status}`).toContain("application/json");
+        if (q.method !== "HEAD") expect(r.isJson, `status ${r.status}: ${r.text}`).toBe(true);
+      }),
+      runs(400),
     );
   }, 180_000);
 });
