@@ -58,6 +58,22 @@ export async function signIn(page: Page, user: E2EUser, next = "/") {
 }
 
 /**
+ * Creates the account through the real /sign-up page and waits until the
+ * browser, now signed in, is back on `next` and its link prefetches are done.
+ */
+export async function signUp(page: Page, user: E2EUser, next = "/") {
+  await page.goto(`/sign-up?next=${encodeURIComponent(next)}`);
+  await expect(page.getByRole("heading", { name: "Create your account" })).toBeVisible();
+  await page.setExtraHTTPHeaders({ "x-forwarded-for": clientIp() });
+  await page.getByLabel("Name").fill(user.name);
+  await page.getByLabel("Email").fill(user.email);
+  await page.getByLabel("Password").fill(E2E_PASSWORD);
+  await page.getByRole("button", { name: "Create account" }).click();
+  await page.waitForURL((u) => u.pathname + u.search === next);
+  await page.waitForLoadState("networkidle");
+}
+
+/**
  * Pays as the signed-in account; lands on the confirmation page. Returns the
  * order id. Tickets always go to the account email — checkout shows it, it is
  * not a field the customer fills in any more.

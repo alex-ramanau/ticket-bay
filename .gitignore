@@ -6,6 +6,7 @@ playwright-report/
 .playwright-mcp/
 coverage/
 .claude/worktrees/
+tmp/
 
 # Next.js
 .next/
@@ -25,3 +26,4 @@ stryker.changed.json
 
 # The pr-tour skill writes its review pages here
 .pr-review/
+
