@@ -6,6 +6,7 @@ playwright-report/
 .playwright-mcp/
 coverage/
 .claude/worktrees/
+tmp/
 
 # Next.js
 .next/
